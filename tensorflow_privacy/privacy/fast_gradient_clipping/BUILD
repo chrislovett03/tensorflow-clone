@@ -3,10 +3,27 @@ load("@rules_python//python:defs.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "tensorflow_graph_utils",
+    srcs = ["tensorflow_graph_utils.py"],
+    srcs_version = "PY3",
+)
+
+py_test(
+    name = "tensorflow_graph_utils_test",
+    srcs = ["tensorflow_graph_utils_test.py"],
+    python_version = "PY3",
+    srcs_version = "PY3",
+    deps = [":tensorflow_graph_utils"],
+)
+
+py_library(
     name = "gradient_clipping_utils",
     srcs = ["gradient_clipping_utils.py"],
     srcs_version = "PY3",
-    deps = [":layer_registry"],
+    deps = [
+        ":layer_registry",
+        ":tensorflow_graph_utils",
+    ],
 )
 
 py_test(

@@ -12,12 +12,106 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from absl.testing import parameterized
 import tensorflow as tf
 
 from tensorflow_privacy.privacy.fast_gradient_clipping import gradient_clipping_utils
 
 
+# ==============================================================================
+# Helper functions and classes.
+# ==============================================================================
+@tf.keras.utils.register_keras_serializable('gradient_clipping_utils_test')
+class DoubleDense(tf.keras.layers.Layer):
+  """Generates two dense layers nested together."""
+
+  def __init__(self, units: int):
+    super().__init__()
+    self.dense1 = tf.keras.layers.Dense(units, name='DDense_ext_1')
+    self.dense2 = tf.keras.layers.Dense(1, name='DDense_ext_2')
+
+  def call(self, inputs: Any):
+    x = self.dense1(inputs)
+    return self.dense2(x)
+
+
+@tf.keras.utils.register_keras_serializable('gradient_clipping_utils_test')
+class DoubleDenseWithDupNames(tf.keras.layers.Layer):
+  """Generates two dense layers nested together."""
+
+  def __init__(self, units: int):
+    super().__init__()
+    self.dense1 = tf.keras.layers.Dense(units, name='DDense_ext_1')
+    self.dense2 = tf.keras.layers.Dense(1, name='DDense_ext_1')
+
+  def call(self, inputs: Any):
+    x = self.dense1(inputs)
+    return self.dense2(x)
+
+
+@tf.keras.utils.register_keras_serializable('gradient_clipping_utils_test')
+class DoubleDenseWithDecreasingNames(tf.keras.layers.Layer):
+  """Generates two dense layers nested together."""
+
+  def __init__(self, units: int):
+    super().__init__()
+    self.dense1 = tf.keras.layers.Dense(units, name='DDense_ext_2')
+    self.dense2 = tf.keras.layers.Dense(1, name='DDense_ext_1')
+
+  def call(self, inputs: Any):
+    x = self.dense1(inputs)
+    return self.dense2(x)
+
+
+@tf.keras.utils.register_keras_serializable('gradient_clipping_utils_test')
+class TripleDense(tf.keras.layers.Layer):
+  """Generates three dense layers nested together."""
+
+  def __init__(self, units: int):
+    super().__init__()
+    self.dense1 = tf.keras.layers.Dense(units, name='TDense_ext_1')
+    self.dense2 = tf.keras.layers.Dense(units, name='TDense_ext_2')
+    self.dense3 = tf.keras.layers.Dense(1, name='TDense_ext_3')
+
+  def call(self, inputs: Any):
+    x1 = self.dense1(inputs)
+    x2 = self.dense2(x1)
+    return self.dense3(x2)
+
+
+@tf.keras.utils.register_keras_serializable('gradient_clipping_utils_test')
+class NestedDoubleDense(tf.keras.layers.Layer):
+  """Generates two double dense layers nested together."""
+
+  def __init__(self, units: int):
+    super().__init__()
+    self.ddense1 = DoubleDense(units)
+    self.ddense2 = DoubleDense(1)
+
+  def call(self, inputs: Any):
+    x = self.ddense1(inputs)
+    return self.ddense2(x)
+
+
+def get_reduced_model(sample_inputs, hidden_layer_list, excluded_layers=None):
+  """Reduces a set of layers to only core Keras layers in a model."""
+  sample_outputs = sample_inputs
+  for l in hidden_layer_list:
+    sample_outputs = l(sample_outputs)
+  custom_model = tf.keras.Model(inputs=sample_inputs, outputs=sample_outputs)
+  reduced_outputs = (
+      gradient_clipping_utils.generate_model_outputs_using_core_keras_layers(
+          custom_model, excluded_layers
+      )
+  )
+  return tf.keras.Model(inputs=custom_model.inputs, outputs=reduced_outputs)
+
+
+# ==============================================================================
+# Main tests.
+# ==============================================================================
 class ModelForwardPassTest(tf.test.TestCase, parameterized.TestCase):
 
   @parameterized.product(
@@ -73,6 +167,92 @@ class ModelForwardPassTest(tf.test.TestCase, parameterized.TestCase):
     )
     true_outputs = model(x_batch)
     self.assertAllClose(computed_outputs, true_outputs)
+
+
+class GenerateOutputsUsingCoreKerasLayers(
+    tf.test.TestCase, parameterized.TestCase
+):
+
+  def test_single_custom_layer_is_reduced(self):
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims),
+        [DoubleDense(num_units)],
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertIsInstance(l, tf.keras.layers.Dense)
+
+  def test_single_custom_layer_with_duplicated_names_is_reduced(self):
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims),
+        [DoubleDenseWithDupNames(num_units)],
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertIsInstance(l, tf.keras.layers.Dense)
+
+  def test_single_custom_layer_with_decreasing_names_is_reduced(self):
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims),
+        [DoubleDenseWithDecreasingNames(num_units)],
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertIsInstance(l, tf.keras.layers.Dense)
+
+  def test_two_distinct_custom_layers_are_reduced(self):
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims),
+        [DoubleDense(num_units), TripleDense(num_units)],
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertIsInstance(l, tf.keras.layers.Dense)
+
+  def test_duplicated_layers_are_reduced(self):
+    # Specifically, ensure layer names are made unique in the final model.
+    # This is checked when the reduced model is formed.
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims),
+        [DoubleDense(num_units), DoubleDense(num_units)],
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertIsInstance(l, tf.keras.layers.Dense)
+
+  def test_single_nested_custom_layer_is_reduced(self):
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims), [NestedDoubleDense(num_units)]
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertIsInstance(l, tf.keras.layers.Dense)
+
+  def test_excluded_layers_are_not_reduced(self):
+    num_units = 5
+    num_dims = 3
+    reduced_model = get_reduced_model(
+        tf.keras.Input(num_dims),
+        [DoubleDense(num_units), TripleDense(num_units)],
+        [TripleDense],
+    )
+    # Ignore the input layer.
+    for l in reduced_model.layers[1:]:
+      self.assertTrue(
+          isinstance(l, tf.keras.layers.Dense) or isinstance(l, TripleDense)
+      )
 
 
 if __name__ == '__main__':
