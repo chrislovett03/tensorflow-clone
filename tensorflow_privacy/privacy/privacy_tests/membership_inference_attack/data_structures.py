@@ -675,8 +675,8 @@ class RocCurve:
     # metric for membership attack models trained on datasets where the number
     # of samples from the training set and the number of samples from the test
     # set are very different. These are referred to as imbalanced datasets.
-    num = np.asarray(self.tpr)
-    den = num + np.asarray([r * self.test_train_ratio for r in self.fpr])
+    num = self.tpr
+    den = num + self.test_train_ratio * self.fpr
     # There is a special case when both `num` and `den` are 0. Both would be 0
     # when TPR and FPR are both 0, since test_train_ratio is strictly positive
     # (exclude the case when there is no test set). Then TPR = 0 means that all
